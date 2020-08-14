@@ -279,7 +279,7 @@ defmodule RuleEngineWithDocs.Ruleset do
       end
 
       # Basic markdown documentation based on the rule definitions.
-      # See `test/ruleset_test.exs` for sample output.
+      # See `test/ruleset_test.exs` or `SampleValidationRuleset.md` for sample output.
       def markdown_doc() do
         docstruct = apply(__MODULE__, :doc_struct, [])
         """

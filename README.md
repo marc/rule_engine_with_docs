@@ -8,40 +8,96 @@ A rule set runs against the specified data and returns a data structure containi
 The rule engine can generate documentation directly from the rule definitions. This helps prevent documentation mistakes and avoids manually keeping up with documentation when rule code is changed.
 
 
-## Rule Definition
+## Adding rule_engine_with_docs to Your Project
 
-`Rule`s are defines in a `Ruleset`:
+Add `rule_engine_with_docs` as a dependency to your project's `mix.exs`:
+```elixir
+defp deps do
+  [
+    {:rule_engine_with_docs, github: "marc/rule_engine_with_docs"}
+  ]
+end
+```
+
+See the next section for some sample validation rules to get started.
+
+
+## Getting Started with Rule Definitions
+
+`Rule`s are defined in a `Ruleset`.
+
+These sample validation rules could be applied to data submitted through an api, batch file, web form, etc.
 
 ```elixir
-defmodule SampleRuleset do
+defmodule SampleValidationRuleset do
   use RuleEngineWithDocs.Ruleset
 
   defrule "simple_rule01",
     description: "A simple rule example.",
     condition: 1 < 10
 
-  defrule "name_length_fl",
-    name: "Maximum Name Length (FL)",
-    description: """
-    This rule is only active in Florida.
-    The Sample 1 name has a maximum length of 100 characters.
-    """,
+  defrule "test_data_detector",
+    name: "No Test Data Allowed",
+    description: "Do not allow the word 'test' (case insensitive) in the first name, last name or guardian name.",
     type: :error,
-    fields: [:name],
-    tags: [:maximum_length, :single_field, :florida],
-    condition: String.length(data[:sample1][:name]) > 100,
-    message: "Sample 1 name should be at most #{50+50} characters in length in Florida.",
-    if: data[:sample1][:state] == "FL"
+    fields: [:first_name, :guardian_name, :last_name],
+    tags: [:test_data],
+    condition: Regex.match?(~r/test/i, "#{data[:registration][:first_name]}") ||
+      Regex.match?(~r/test/i, "#{data[:registration][:last_name]}") ||
+      Regex.match?(~r/test/i, "#{data[:registration][:guardian_name]}"),
+    message: "Test data detected in one of the following fields: first_name, guardian_name, last_name."
 
-  defrule "contact_info1",
-    name: "No Contact Information Provided",
+  defrule "age_check_18",
+    name: "Age Check 18+",
+    description: """
+    If a date of birth is submitted, check if the person is 18+ as of today.
+    This rule does not apply if no valid ISO 8601 date (YYYY-MM-DD) was submitted.
+
+    Technical Note: Using Date.diff to check the number of days between the date of birth and today.
+    """,
     type: :notice,
-    fields: [:email, :phone, :team_chat_user_name],
-    tags: [:contact_info],
+    message: "This person is a minor based on today's date and the submitted date of birth (#{data[:registration][:date_of_birth]}).",
+    fields: [:date_of_birth],
+    tags: [:single_field],
+    condition: Date.diff(Date.utc_today, Date.from_iso8601!("#{data[:registration][:date_of_birth]}")) < (18*365),
+    if: :ok == List.first(Tuple.to_list(Date.from_iso8601("#{data[:registration][:date_of_birth]}")))
+
+  defrule "guardian_for_minor",
+    name: "Guardian Name Required for Minors",
+    description: """
+    If a date of birth is submitted in ISO 8601 format (YYYY-MM-DD), check if the person is 18+ as of today to determine if they are a minor.
+    The guardian name is required if the registration is submitted for a minor.
+    """,
+    message: "The guardian name is required if the registration is submitted for a minor.",
+    type: :error,
+    fields: [:guardian_name, :date_of_birth],
+    tags: [:correlation, :missing_data],
+    condition: String.length(String.trim("#{data[:registration][:guardian_name]}")) == 0,
+    if: :ok == List.first(Tuple.to_list(Date.from_iso8601("#{data[:registration][:date_of_birth]}"))) &&
+      Date.diff(Date.utc_today, Date.from_iso8601!("#{data[:registration][:date_of_birth]}")) < (18*365)
+
+  defrule "contact_info_req",
+    name: "No Contact Information Provided",
+    type: :error,
+    fields: [:email, :phone],
+    tags: [:contact_info, :missing_data],
     condition: (String.length(String.trim("#{data[:registration][:email]}")) == 0) &&
-      (String.length(String.trim("#{data[:registration][:phone]}")) == 0) &&
-      (String.length(String.trim("#{data[:registration][:team_chat_user_name]}")) == 0),
-    message: "No contact information provided. If you wish to receive updates, please provide at least one of the following: email, phone, team_chat_user_name"
+      (String.length(String.trim("#{data[:registration][:phone]}")) == 0),
+    message: "No contact information provided. One of the following contact information fields is required: email, phone"
+
+  defrule "first_name_length_fl",
+    name: "Maximum First Name Length (FL)",
+    description: """
+    This sample rule is only active in Florida.
+    The first name has a maximum length of 100 characters.
+    """,
+    type: :notice,
+    fields: [:first_name],
+    tags: [:maximum_length, :single_field, :florida],
+    condition: String.length(data[:registration][:first_name]) > 100,
+    message: "First name should be at most #{50+50} characters in length in Florida.",
+    if: data[:registration][:state] == "FL"
+
 end
 ```
 
@@ -63,7 +119,7 @@ end
 
 `tags`: Tags can be helpful for both the documentation and gathering metrics about what rules are triggered. These can be used to set categories and other labels to classify rules.
 
-`if`: This code defines the requirement or scenario for the rule to apply. The `data` Map is passed into each rule and functions can be called from the code. The code should return `true` or `false`. This defaults to `true` which means the rule will be evaluated when a `Ruleset` is run.
+`if`: This code defines the requirement or scenario for the rule to apply. The `data` Map is passed into each rule and functions can be called from the code. The code should return `true` or `false`. This defaults to `true` which means the rule will be evaluated when a `Ruleset` is run. A rule can be deactivated by setting this to `false`.
 
 
 ## Running a Ruleset and Evaluating Rules
@@ -72,75 +128,93 @@ After defining some `Rule`s in a `Ruleset`, the rules can be evaluated:
 
 ```elixir
 data = %{
-  sample1: %{
-    name: "Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test 103"
-  },
   registration: %{
+    first_name: "Test",
+    date_of_birth: "1984-01-01"
   }
 }
-# %{
-#   registration: %{},
-#   sample1: %{
-#     name: "Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test 103"
-#   }
-# }
+# %{registration: %{date_of_birth: "1984-01-01", first_name: "Test"}}
 
-SampleRuleset.run(data)
+SampleValidationRuleset.run(data)
 # %{
-#   condition_results: %{"contact_info1" => true, "simple_rule01" => true},
-#   fields: %{email: 1, phone: 1, team_chat_user_name: 1},
+#   condition_results: %{
+#     "age_check_18" => false,
+#     "contact_info_req" => true,
+#     "simple_rule01" => true,
+#     "test_data_detector" => true
+#   },
+#   fields: %{email: 1, first_name: 1, guardian_name: 1, last_name: 1, phone: 1},
 #   if_results: %{
-#     "contact_info1" => true,
-#     "name_length_fl" => false,
-#     "simple_rule01" => true
+#     "age_check_18" => true,
+#     "contact_info_req" => true,
+#     "first_name_length_fl" => false,
+#     "guardian_for_minor" => false,
+#     "simple_rule01" => true,
+#     "test_data_detector" => true
 #   },
 #   messages: %{
-#     notice: %{
-#       email: ["No contact information provided. If you wish to receive updates, please provide at least one of the following: email, phone, team_chat_user_name"]
+#     error: %{
+#       email: ["No contact information provided. One of the following contact information fields is required: email, phone"],
+#       first_name: ["Test data detected in one of the following fields: first_name, guardian_name, last_name."]
 #     }
 #   },
-#   tags: %{contact_info: 1},
-#   types: %{notice: ["contact_info1"], undefined: ["simple_rule01"]}
+#   tags: %{contact_info: 1, missing_data: 1, test_data: 1},
+#   types: %{
+#     error: ["contact_info_req", "test_data_detector"],
+#     undefined: ["simple_rule01"]
+#   }
 # }
 
 
 data = %{
-  sample1: %{
-    name: "Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test 103",
-    state: "FL"
-  },
   registration: %{
+    first_name: "Sample__10________20________30________40________50________60________70________80________90_______100-over 100 characters",
+    last_name: "Name",
+    date_of_birth: "2525-01-01",
     email: "test@test.test"
   }
 }
 # %{
-#   registration: %{email: "test@test.test"},
-#   sample1: %{
-#     name: "Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test Test 103",
-#     state: "FL"
+#   registration: %{
+#     date_of_birth: "2037-01-01",
+#     email: "test@test.test",
+#     first_name: "Sample__10________20________30________40________50________60________70________80________90_______100-over 100 characters",
+#     last_name: "Name"
 #   }
 # }
 
-SampleRuleset.run(data)
+SampleValidationRuleset.run(data)
 # %{
 #   condition_results: %{
-#     "contact_info1" => false,
-#     "name_length_fl" => true,
-#     "simple_rule01" => true
+#     "age_check_18" => true,
+#     "contact_info_req" => false,
+#     "guardian_for_minor" => true,
+#     "simple_rule01" => true,
+#     "test_data_detector" => false
 #   },
-#   fields: %{name: 1},
+#   fields: %{date_of_birth: 2, guardian_name: 1},
 #   if_results: %{
-#     "contact_info1" => true,
-#     "name_length_fl" => true,
-#     "simple_rule01" => true
+#     "age_check_18" => true,
+#     "contact_info_req" => true,
+#     "first_name_length_fl" => false,
+#     "guardian_for_minor" => true,
+#     "simple_rule01" => true,
+#     "test_data_detector" => true
 #   },
-#   messages: %{
+#   messages: %{ 
 #     error: %{
-#       name: ["Sample 1 name should be at most 100 characters in length in Florida."]
+#       guardian_name: ["The guardian name is required if the registration is submitted for a minor."]
+#     },
+#     notice: %{
+#       date_of_birth: ["This person is a minor based on today's date and the submitted date of birth # (2525-01-01)."]
 #     }
 #   },
-#   tags: %{florida: 1, maximum_length: 1, single_field: 1},
-#   types: %{error: ["name_length_fl"], undefined: ["simple_rule01"]}
+#   tags: %{correlation: 1, missing_data: 1, single_field: 1},
+#   types: %{
+#     error: ["guardian_for_minor"],
+#     notice: ["age_check_18"],
+#     undefined: ["simple_rule01"]
+#   }
 # }
 ```
 
@@ -165,39 +239,69 @@ Documentation can be generated directly from the rule definitions! This helps pr
 
 The library can generate a markdown document or return a Map representation of the documentation. The documentation structure can be used to build custom documentation in other formats like PDF or HTML.
 
-Markdown documentation is returned as a String by `SampleRuleset.markdown_doc`.
-To see the markdown generated for the `SampleRuleset`, see the [SampleRuleset.md](SampleRuleset.md) file.
+Markdown documentation is returned as a String by `SampleValidationRuleset.markdown_doc`.
+To see the markdown generated for the `SampleValidationRuleset`, see the [SampleValidationRuleset.md](SampleValidationRuleset.md) file.
 
-The following documentation structure is returned for `SampleRuleset.doc_struct`:
+The following documentation structure is returned for `SampleValidationRuleset.doc_struct`:
 ```elixir
 %{
   all_fields: %{
-    email: ["contact_info1"],
-    name: ["name_length_fl"],
-    phone: ["contact_info1"],
-    team_chat_user_name: ["contact_info1"]
+    date_of_birth: ["age_check_18", "guardian_for_minor"],
+    email: ["contact_info_req"],
+    first_name: ["first_name_length_fl", "test_data_detector"],
+    guardian_name: ["guardian_for_minor", "test_data_detector"],
+    last_name: ["test_data_detector"],
+    phone: ["contact_info_req"]
   },
   all_tags: %{
-    contact_info: ["contact_info1"],
-    florida: ["name_length_fl"],
-    maximum_length: ["name_length_fl"],
-    single_field: ["name_length_fl"]
+    contact_info: ["contact_info_req"],
+    correlation: ["guardian_for_minor"],
+    florida: ["first_name_length_fl"],
+    maximum_length: ["first_name_length_fl"],
+    missing_data: ["contact_info_req", "guardian_for_minor"],
+    single_field: ["age_check_18", "first_name_length_fl"],
+    test_data: ["test_data_detector"]
   },
   all_types: %{
-    error: ["name_length_fl"],
-    notice: ["contact_info1"],
+    error: ["contact_info_req", "guardian_for_minor", "test_data_detector"],
+    notice: ["age_check_18", "first_name_length_fl"],
     undefined: ["simple_rule01"]
   },
-  rule_ids: ["contact_info1", "name_length_fl", "simple_rule01"]
+  rule_ids: ["age_check_18", "contact_info_req", "first_name_length_fl",
+   "guardian_for_minor", "simple_rule01", "test_data_detector"]
 }
 ```
 
-All rule attributes can be retrieved with `Ruleset.rule("simple_rule01")`:
+`Ruleset.rule/1` returns all attributes of a rule, including the condition code and if code.
 ```elixir
-SampleRuleset.rule("simple_rule01").description
+SampleValidationRuleset.rule("simple_rule01").description
 # "A simple rule example."
+SampleValidationRuleset.rule("contact_info_req").name    
+# "No Contact Information Provided"
+SampleValidationRuleset.rule("contact_info_req").message
+# "No contact information provided. One of the following contact information fields is required: email, phone"
+SampleValidationRuleset.rule("simple_rule01") 
+# %RuleEngineWithDocs.Rule{
+#   condition: {:<, [line: 6], [1, 10]},
+#   description: "A simple rule example.",
+#   fields: [],
+#   id: "simple_rule01",
+#   if: true,
+#   message: nil,
+#   name: nil,
+#   tags: [],
+#   type: :undefined
+# }
 ```
+Notice that the `condition` code and `if` code is Elixir code as returned by `Macro.escape/1`.
+To show a text representation of the `condition` code or `if` code, use `Macro.to_string/1`:
 
+```elixir
+Macro.to_string(SampleValidationRuleset.rule("age_check_18").condition)
+# "Date.diff(Date.utc_today(), Date.from_iso8601!(\"\#{data[:registration][:date_of_birth]}\")) < 18 * 365"
+Macro.to_string(SampleValidationRuleset.rule("contact_info_req").condition)
+# "String.length(String.trim(\"\#{data[:registration][:email]}\")) == 0 && String.length(String.trim(\"\#{data[:registration][:phone]}\")) == 0"
+```
 
 ## Additional Information
 
@@ -221,15 +325,22 @@ The `Ruleset.eval_rule/2` function returns the result of evaluating the `if` cod
 ```elixir
 data = %{registration: %{}}
 # %{registration: %{}}
-%{id: id, if_result: if_result, condition_result: condition_result, message: message} = SampleRuleset.eval_rule(data, "contact_info1")
+%{id: id, if_result: if_result, condition_result: condition_result, message: message} = SampleValidationRuleset.eval_rule(data, "contact_info_req")
 # %{
 #   condition_result: true,
-#   id: "contact_info1",
+#   id: "contact_info_req",
 #   if_result: true,
-#   message: "No contact information provided. If you wish to receive updates, please provide at least one of the following: email, phone, team_chat_user_name"
+#   message: "No contact information provided. One of the following contact information fields is required: email, phone"
 # }
 data = %{registration: %{email: "test@test.test"}}
 # %{registration: %{email: "test@test.test"}}
-%{id: id, if_result: if_result, condition_result: condition_result, message: message} = SampleRuleset.eval_rule(data, "contact_info1")
-# %{condition_result: false, id: "contact_info1", if_result: true, message: nil}
+%{id: id, if_result: if_result, condition_result: condition_result, message: message} = SampleValidationRuleset.eval_rule(data, "contact_info_req")
+# %{
+#   condition_result: false,
+#   id: "contact_info_req",
+#   if_result: true,
+#   message: nil
+# }
 ```
+
+Since we are only testing a single rule, we do not need to create `data` with all attributes, only the fields relevant to this rule.
