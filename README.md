@@ -51,9 +51,10 @@ defmodule SampleValidationRuleset do
     name: "Age Check 18+",
     description: """
     If a date of birth is submitted, check if the person is 18+ as of today.
-    This rule does not apply if no valid ISO 8601 date (YYYY-MM-DD) was submitted.
 
-    Technical Note: Using Date.diff to check the number of days between the date of birth and today.
+    * This rule does not apply if no valid **ISO 8601** date (YYYY-MM-DD) was submitted.
+    * Using `Date.diff` to check the number of days between the date of birth and today.
+    * Using _markdown_ in the description!
     """,
     type: :notice,
     message: "This person is a minor based on today's date and the submitted date of birth (#{data[:registration][:date_of_birth]}).",
