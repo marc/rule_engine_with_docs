@@ -58,7 +58,8 @@ defmodule RuleEngineWithDocs.ResultsList do
     )
     map = Map.new(types, fn type -> {type, %{}} end)
     map = Enum.reduce(types, map, fn type, map_acc ->
-      type_messages = Enum.filter_map(messages, fn({msg_type,field,message}) -> msg_type == type end, &(  tl(Tuple.to_list(&1))  ))
+      type_messages = Enum.filter(messages, fn({msg_type,_field,_message}) -> msg_type == type end)
+        |> Enum.map(&( tl(Tuple.to_list(&1)) ))
       fields = Enum.uniq(
         Enum.map(type_messages, fn([field,_message]) ->
           field

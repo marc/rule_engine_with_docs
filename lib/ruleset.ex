@@ -67,11 +67,11 @@ defmodule RuleEngineWithDocs.Ruleset do
     name = Keyword.get(kv, :name, nil)
     fields = Keyword.get(kv, :fields, [])
     tags = Keyword.get(kv, :tags, [])
-    condition_str = Macro.to_string(condition)
-    message_str = Macro.to_string(message)
-    run_if_str = Macro.to_string(run_if)
 
     # IO.inspect "----------------------"
+    # condition_str = Macro.to_string(condition)
+    # message_str = Macro.to_string(message)
+    # run_if_str = Macro.to_string(run_if)
     # IO.inspect %{
     #   id: id,
     #   type: type,
